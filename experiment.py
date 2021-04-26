@@ -5,8 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import numpy as np
-import pickle
-import interrupt
+import json
+import datetime
+#  import interrupt
 import matplotlib.pyplot as plt
 
 class FullyConnected(nn.Module):
@@ -67,6 +68,8 @@ class Coordinet(nn.Module):
         h = torch.transpose(torch.tile(h,(shape[0],1,shape[3],1)),3,2)
         w = torch.tile(w,(shape[0],1,shape[2],1))
         coords = torch.cat([h,w],dim=1)
+        if GPU:
+            coords = coords.cuda()
         coords = coords/28
         x = torch.cat([x,coords],dim=1)
         x = torch.reshape(x, (shape[0], x.shape[1], shape[2]*shape[3]))
@@ -111,31 +114,42 @@ def training_loop(model, train_dataset, test_dataset):
 
     # Data loader
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
-                                               batch_size=batch_size, 
+                                               batch_size=BATCH_SIZE, 
                                                shuffle=True)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset, 
-                                              batch_size=batch_size, 
+                                              batch_size=BATCH_SIZE, 
                                               shuffle=False)
 
     # set up for training loop
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr,)# momentum=momentum)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR,)# momentum=momentum)
     loss_criterion = nn.CrossEntropyLoss()
 
-    #  print("Num Parameters: ", model.num_parameters())
 
-    curr_loss = 10e8
+    # Data dict
+    training_record = dict(epoch=[], 
+                           training_acc=[], 
+                           validation_acc=[], 
+                           training_loss=[], 
+                           validation_loss=[])
 
     # training loop
+    curr_loss = 10e8
     epoch = 0
-    while(curr_loss > LOSS_THRESHOLD):
+    while(epoch < NUM_EPOCHS and curr_loss > LOSS_THRESHOLD):
+        total_correct = 0
         curr_loss = 0
         num_training_images = 0
         for i, (X, y) in enumerate(train_loader):
+            if GPU:
+                X = X.cuda()
+                y = y.cuda()
             
             #  Forward pass
             outputs = model(X)
+            prediction = torch.argmax(outputs, dim=1)
             loss = loss_criterion(outputs, y)
             curr_loss += loss.item()*y.shape[0] #curr batch size
+            total_correct += torch.sum(prediction == y)
             num_training_images += y.shape[0]
             
             # Backprpagation and optimization
@@ -143,66 +157,39 @@ def training_loop(model, train_dataset, test_dataset):
             loss.backward()
             optimizer.step()
             
-        curr_loss /= num_training_images
-        print(f"\r Epoch {epoch+1}, Average Loss: {curr_loss}",end='')
+        training_record['epoch'].append(epoch)
+        training_record['training_loss'].append(float(curr_loss/num_training_images))
+        training_record['training_acc'].append(float(total_correct/num_training_images))
+
+        # run test
+        with torch.no_grad():
+            total_correct = 0
+            total_loss = 0
+            total_images = 0
+            for X, y in test_loader:
+                if GPU:
+                    X = X.cuda()
+                    y = y.cuda()
+                outputs = model(X)
+
+                prediction = torch.argmax(outputs, dim=1) # max outputs max and argmax
+                num_correct = torch.sum(prediction == y)
+                total_correct += num_correct.item()
+                total_images += y.shape[0]
+
+                total_loss += loss_criterion(outputs, y).item()*y.shape[0]
+
+            training_record['validation_acc'].append(float(total_correct / total_images))
+            training_record['validation_loss'].append(float(total_loss / total_images))
+
+        print(f"Epoch {epoch}, Training Acc: {training_record['training_acc'][epoch]:.3f}, Validation acc: {training_record['validation_acc'][epoch]:.3f}")
         epoch += 1
-        if(BREAK_TRAINING): 
-            break
-        if(epoch > 10000):
-            print("*********************** ERROR ******************************")
-            print(" ************************ got stuck ***********************")
-            break
     print()
 
-    # testing
-    with torch.no_grad():
-        total_correct = 0
-        total_loss = 0
-        total_images = 0
-        for X, y in train_loader:
-            outputs = model(X)
+    return training_record
 
-            prediction = torch.argmax(outputs, dim=1) # max outputs max and argmax
-            num_correct = torch.sum(prediction == y)
-            total_correct += num_correct.item()
-            total_images += y.shape[0]
-
-            total_loss += loss_criterion(outputs, y).item()*y.shape[0]
-
-        train_accuracy = total_correct / total_images
-        train_loss = total_loss / total_images
-        num_training_images = total_images
-
-        total_correct = 0
-        total_loss = 0
-        total_images = 0
-        for X, y in test_loader:
-            outputs = model(X)
-
-            prediction = torch.argmax(outputs, dim=1) # max outputs max and argmax
-            num_correct = torch.sum(prediction == y)
-            total_correct += num_correct.item()
-            total_images += y.shape[0]
-
-            total_loss += loss_criterion(outputs, y).item()*y.shape[0]
-
-        gen_accuracy = total_correct / total_images
-        gen_loss = total_loss / total_images
-        num_test_images = total_images
-        
-        print("Train Accuracy: ", train_accuracy)
-        print("Test Accuracy: ", gen_accuracy)
-        #  print("Test Loss: ", gen_loss)
-        #  print("\n\n")
-
-    stats = dict(num_parameters = model.num_parameters(), 
-                 train_accuracy = train_accuracy,
-                 train_loss = train_loss,
-                 generalisation_accuracy = gen_accuracy,
-                 generalisation_loss = gen_loss,
-                 num_training_images = num_training_images,
-                 num_test_images = num_test_images)
-    return stats
+###########################
+# Get dataset
 
 def flatten(x):
     return torch.reshape(x,(-1,))
@@ -212,46 +199,40 @@ transform = torchvision.transforms.Compose([
     #  flatten,
     ])
 
-train1 = torchvision.datasets.FashionMNIST('~/data/',train=True,transform=transform, download=True)
-test1 = torchvision.datasets.FashionMNIST('~/data/',train=False,transform=transform, download=True)
+train1 = torchvision.datasets.FashionMNIST('./data/',train=True,transform=transform, download=True)
+test1 = torchvision.datasets.FashionMNIST('./data/',train=False,transform=transform, download=True)
 
-# hyperparams
+###########################
+# Define Hyperparameters
 
-batch_size = 256
-num_epochs = 50
-lr = 0.0001
-momentum = 0.9
-LOSS_THRESHOLD = 0.98
+BATCH_SIZE = 256
+NUM_EPOCHS = 50
+LR = 0.0001
+MOMENTUM = 0.9
+LOSS_THRESHOLD = 0.0
 BREAK_TRAINING = False
-DATASET_SIZE = len(train1)
+GPU = torch.cuda.is_available()
+
+##############################
+# Run test
+
+#  model = Coordinet(3, 30, 10, [],[20])
+model = Coordinet(3, 200, 10, [200,200],[100,80])
+if GPU:
+    model = model.cuda()
+stats1 = training_loop(model,train1,test1)
 
 
-# get data
-stats_list = []
-accuracy_list = []
-# iterate over experiment variations 
-for i in [0]:
-    exp1_acc = []
-    # run 10 of each experiment
-    for _ in range(10):
-        model = Coordinet(3, 30, 10, [],[20])
-        stats1 = training_loop(model,train1,test1)
-        exp1_acc.append(stats1['generalisation_accuracy'])
-        stats_list.append([DATASET_SIZE,stats1])
+############################
+# Save results (can be turned into graphs later)
 
-    accuracies_dict = {'n':DATASET_SIZE, 1:exp1_acc, }
-    print(accuracies_dict)
-    print([np.mean(accuracies_dict[i]) for i in [1,]])
-    accuracy_list.append(accuracies_dict)
+timestamp = datetime.datetime.now().strftime("%M-%H-%d-%m")
+experiment_name = "initial_test"
+filename = f"{experiment_name}-{timestamp}.json"
+json.dump(stats1, open(filename, 'w'))
 
-
-    with open("accuracy_list.pickle", "wb") as f:
-        pickle.dump(accuracy_list,f)
-
-    with open("stats.pickle", "wb") as f:
-        pickle.dump(stats_list, f)
-with open("accuracy_list.pickle", "wb") as f:
-    pickle.dump(accuracy_list,f)
-
-with open("stats.pickle", "wb") as f:
-    pickle.dump(stats_list, f)
+try:
+    from google.colab import files
+    files.download(filename)
+except:
+    pass
