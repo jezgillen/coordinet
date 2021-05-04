@@ -50,7 +50,12 @@ class PixelCoordinateEmbeddings(nn.Module):
     def __init__(self, embedding_size):
         super().__init__()
         self.w = nn.ModuleList()
-        self.B = nn.Linear(2, embedding_size-2-1)
+
+        sin_embedding_size = embedding_size-2-1
+        self.B = nn.Linear(2, sin_embedding_size)
+        with torch.no_grad():
+            self.B.weight[:(sin_embedding_size)//2,0] = 28*torch.arange(0,(sin_embedding_size)//2)/sin_embedding_size
+            self.B.weight[(sin_embedding_size)//2:,1] = 28*torch.arange(0,(sin_embedding_size)-(sin_embedding_size)//2)/sin_embedding_size
 
         self.w.append(self.B)
 
@@ -148,6 +153,7 @@ def training_loop(model, train_dataset, test_dataset):
 
     # set up for training loop
     optimizer = torch.optim.Adam(model.parameters(), lr=LR,)# momentum=momentum)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     loss_criterion = nn.CrossEntropyLoss()
 
 
@@ -186,6 +192,7 @@ def training_loop(model, train_dataset, test_dataset):
         training_record['epoch'].append(epoch)
         training_record['training_loss'].append(float(curr_loss/num_training_images))
         training_record['training_acc'].append(float(total_correct/num_training_images))
+        scheduler.step(curr_loss/num_training_images)
 
         # run test
         with torch.no_grad():
@@ -231,7 +238,7 @@ test1 = torchvision.datasets.FashionMNIST('./data/',train=False,transform=transf
 ###########################
 # Define Hyperparameters
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 NUM_EPOCHS = 50
 LR = 0.0005
 MOMENTUM = 0.9
@@ -244,7 +251,7 @@ GPU = torch.cuda.is_available()
 input_dhw = (1,28,28)
 
 #model = Coordinet(input_dhw, 20, 30, 10, [],[20])
-model = Coordinet(input_dhw, 30, 400, 10, [200,200],[200,200])
+model = Coordinet(input_dhw, 50, 200, 10, [200,200],[200,200])
 print(model.num_parameters())
 
 if GPU:
