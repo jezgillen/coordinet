@@ -240,7 +240,7 @@ test1 = torchvision.datasets.FashionMNIST('./data/',train=False,transform=transf
 # Define Hyperparameters
 
 BATCH_SIZE = 64
-NUM_EPOCHS = 100
+NUM_EPOCHS = 200
 LR = 0.0100
 MOMENTUM = 0.9
 LOSS_THRESHOLD = 0.0

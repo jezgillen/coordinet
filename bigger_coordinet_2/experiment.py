@@ -153,7 +153,7 @@ def training_loop(model, train_dataset, test_dataset):
 
     # set up for training loop
     optimizer = torch.optim.Adam(model.parameters(), lr=LR,)# momentum=momentum)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',min_lr=0.00001)
     loss_criterion = nn.CrossEntropyLoss()
 
 
@@ -240,8 +240,8 @@ test1 = torchvision.datasets.FashionMNIST('./data/',train=False,transform=transf
 # Define Hyperparameters
 
 BATCH_SIZE = 64
-NUM_EPOCHS = 100
-LR = 0.0100
+NUM_EPOCHS = 60
+LR = 0.0010
 MOMENTUM = 0.9
 LOSS_THRESHOLD = 0.0
 BREAK_TRAINING = False
@@ -252,7 +252,7 @@ GPU = torch.cuda.is_available()
 input_dhw = (1,28,28)
 
 #model = Coordinet(input_dhw, 20, 30, 10, [],[20])
-model = Coordinet(input_dhw, 50, 200, 10, [200,200],[200,200])
+model = Coordinet(input_dhw, 100, 400, 10, [200,200],[200,200,200])
 print(model.num_parameters())
 
 if GPU:
